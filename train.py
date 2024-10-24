@@ -12,11 +12,7 @@ import torch
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset, DataLoader
-from torch.utils.data.distributed import DistributedSampler
-from torchvision.datasets import ImageFolder
-from torchvision import transforms
 import numpy as np
 from collections import OrderedDict
 from PIL import Image
@@ -27,10 +23,12 @@ import argparse
 import logging
 import os
 from accelerate import Accelerator
+from tqdm import tqdm
 
 from models import DiT_models
 from diffusion import create_diffusion
-from diffusers.models import AutoencoderKL
+from accelerate.utils import set_seed
+import wandb
 
 
 #################################################################################
@@ -111,7 +109,6 @@ class CustomDataset(Dataset):
         while cur_retry < self.retries: 
             try:
                 feature_file = self.features_files[idx]
-                # label_file = self.labels_files[idx]
 
                 features = np.load(os.path.join(self.features_dir, feature_file))
                 labels = int(feature_file[feature_file.rfind('label')+5:feature_file.rfind('.npy')])
@@ -150,7 +147,10 @@ def main(args):
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
 
     # Setup accelerator:
-    accelerator = Accelerator()
+    accelerator = Accelerator(
+        mixed_precision=args.mixed_precision,
+        log_with='wandb',
+    )
     device = accelerator.device
 
     # Setup an experiment folder:
@@ -164,6 +164,16 @@ def main(args):
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
 
+        accelerator.init_trackers(
+            project_name="DiT", 
+            config=args,
+            init_kwargs={
+                "wandb": {"name": f"{args.exp_name}"}
+            },
+        )
+    if args.seed is not None:
+        set_seed(args.seed)
+
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = args.image_size // 8
@@ -176,7 +186,7 @@ def main(args):
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
     requires_grad(ema, False)
     diffusion = create_diffusion(timestep_respacing="")  # default: 1000 steps, linear noise schedule
-    vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
+    # vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
     if accelerator.is_main_process:
         logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
@@ -193,7 +203,7 @@ def main(args):
     loader = DataLoader(
         dataset,
         batch_size=int(args.global_batch_size // accelerator.num_processes),
-        shuffle=True,
+        shuffle=False,
         num_workers=args.num_workers,
         pin_memory=True,
         drop_last=True
@@ -209,9 +219,16 @@ def main(args):
 
     # Variables for monitoring/logging purposes:
     train_steps = 0
-    log_steps = 0
-    running_loss = 0
-    start_time = time()
+    # running_loss = 0
+    # start_time = time()
+
+    progress_bar = tqdm(
+        range(0, args.max_train_steps),
+        initial=train_steps,
+        desc="Steps",
+        # Only show the progress bar once on each machine.
+        disable=not accelerator.is_local_main_process,
+    )
     
     if accelerator.is_main_process:
         logger.info(f"Training for {args.epochs} epochs...")
@@ -232,24 +249,14 @@ def main(args):
             opt.step()
             update_ema(ema, model)
 
-            # Log loss values:
-            running_loss += loss.item()
-            log_steps += 1
             train_steps += 1
-            if train_steps % args.log_every == 0:
-                # Measure training speed:
-                torch.cuda.synchronize()
-                end_time = time()
-                steps_per_sec = log_steps / (end_time - start_time)
-                # Reduce loss history over all processes:
-                avg_loss = torch.tensor(running_loss / log_steps, device=device)
-                avg_loss = avg_loss.item() / accelerator.num_processes
-                if accelerator.is_main_process:
-                    logger.info(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}")
-                # Reset monitoring variables:
-                running_loss = 0
-                log_steps = 0
-                start_time = time()
+            progress_bar.update(1)
+            print(accelerator.gather(loss))
+            logs = {
+                "loss": accelerator.gather(loss).mean().detach().item(),
+            }
+            accelerator.log(logs, step=train_steps)
+            progress_bar.set_postfix(**logs)
 
             # Save DiT checkpoint:
             if train_steps % args.ckpt_every == 0 and train_steps > 0:
@@ -283,14 +290,18 @@ if __name__ == "__main__":
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--global-seed", type=int, default=0)
     parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
-    parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=50_000)
+    parser.add_argument("--max-train-steps", type=int, default=400_000)
     parser.add_argument(
         "--dummydata",
         action='store_true',
         help="whether to use dummy data",
     )
+    parser.add_argument("--exp-name", type=str, default="init_exp")
+    parser.add_argument("--mixed-precision", type=str, default="fp16", choices=["no", "fp16", "bf16"])
+    parser.add_argument("--seed", type=int, default=0)
 
     args = parser.parse_args()
     main(args)
