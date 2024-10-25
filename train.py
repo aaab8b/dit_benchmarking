@@ -251,7 +251,7 @@ def main(args):
 
             train_steps += 1
             progress_bar.update(1)
-            print(accelerator.gather(loss))
+            # print(accelerator.gather(loss))
             logs = {
                 "loss": accelerator.gather(loss).mean().detach().item(),
             }
@@ -270,6 +270,11 @@ def main(args):
                     checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
                     torch.save(checkpoint, checkpoint_path)
                     logger.info(f"Saved checkpoint to {checkpoint_path}")
+
+            if train_steps >= args.max_train_steps:
+                break
+        if train_steps >= args.max_train_steps:
+            break
 
     model.eval()  # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
