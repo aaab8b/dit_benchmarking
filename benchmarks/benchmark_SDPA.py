@@ -4,10 +4,10 @@ import torch.nn.functional as F
 
 
 
-# print("Tuning enabled")
-# os.environ["PYTORCH_TUNABLEOP_ENABLED"] = "1"  # Enable tuning
-# os.environ["PYTORCH_TUNABLEOP_VERBOSE"] = "1"  # Enable tuning
-# os.environ["PYTORCH_TUNABLEOP_FILENAME"] = "linear_tune_res.csv"  # Specify output file
+print("Tuning enabled")
+os.environ["PYTORCH_TUNABLEOP_ENABLED"] = "1"  # Enable tuning
+os.environ["PYTORCH_TUNABLEOP_VERBOSE"] = "1"  # Enable tuning
+os.environ["PYTORCH_TUNABLEOP_FILENAME"] = "sdpa_tune_res.csv"  # Specify output file
 
 def time_SDPA_forward(bs, seq_len, num_heads, head_dim):
 
@@ -31,7 +31,7 @@ def time_SDPA_forward(bs, seq_len, num_heads, head_dim):
 
     return n_iter/dt, dt
 
-def time_linear_forward_backward(bs, seq_len, num_heads, head_dim):
+def time_SDPA_forward_backward(bs, seq_len, num_heads, head_dim):
 
     in_data = torch.randn((bs, num_heads, seq_len, head_dim), requires_grad=True).cuda()
 
@@ -60,6 +60,6 @@ print(f'seq_len, bs, in_c, out_c, iter_per_sec')
 for seq_len in [256, 1024]:
     for bs in [16, 32, 64]:
         for num_heads, head_dim in [(16, 72)]:
-                iter_per_sec, t = time_linear_forward_backward(bs, seq_len, num_heads, head_dim)
+                iter_per_sec, t = time_SDPA_forward(bs, seq_len, num_heads, head_dim)
                 print(f'{seq_len}, {bs}, {num_heads}, {head_dim}, {iter_per_sec}')
                 # print(f"{iter_per_sec:0.2f} iter/s ({t:0.4g}s)")

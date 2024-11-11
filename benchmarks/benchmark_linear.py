@@ -8,10 +8,10 @@ os.environ["PYTORCH_TUNABLEOP_ENABLED"] = "1"  # Enable tuning
 os.environ["PYTORCH_TUNABLEOP_VERBOSE"] = "1"  # Enable tuning
 os.environ["PYTORCH_TUNABLEOP_FILENAME"] = "linear_tune_res.csv"  # Specify output file
 
-def time_linear_forward(bs, seq_len, in_c, out_c):
+def time_linear_forward(bs, seq_len, in_c, out_c, dtype=torch.float32):
 
-    linear = torch.nn.Linear(in_c, out_c).cuda()
-    in_data = torch.randn((bs, seq_len, in_c)).cuda()
+    linear = torch.nn.Linear(in_c, out_c).cuda().to(dtype)
+    in_data = torch.randn((bs, seq_len, in_c)).cuda().to(dtype)
 
     n_iter = 1000  # Number of iterations to time
     n_warmup = 10  # Number of warmup iterations
@@ -31,10 +31,10 @@ def time_linear_forward(bs, seq_len, in_c, out_c):
 
     return n_iter/dt, dt
 
-def time_linear_forward_backward(bs, seq_len, in_c, out_c):
+def time_linear_forward_backward(bs, seq_len, in_c, out_c, dtype=torch.float32):
 
-    linear = torch.nn.Linear(in_c, out_c).cuda()
-    in_data = torch.randn((bs, seq_len, in_c)).cuda()
+    linear = torch.nn.Linear(in_c, out_c).cuda().to(dtype)
+    in_data = torch.randn((bs, seq_len, in_c)).cuda().to(dtype)
 
     n_iter = 1000  # Number of iterations to time
     n_warmup = 10  # Number of warmup iterations
@@ -62,6 +62,6 @@ for seq_len in [256, 1024]:
     for bs in [16, 32, 64]:
         for in_c, out_c in [(1152, 32), (1152, 6912), (4608, 1152), (1152, 4608), (1152, 1152),
                             (1152, 3456)]:
-                iter_per_sec, t = time_linear_forward_backward(bs, seq_len, in_c, out_c)
+                iter_per_sec, t = time_linear_forward_backward(bs, seq_len, in_c, out_c, dtype=torch.bfloat16)
                 print(f'{seq_len}, {bs}, {in_c}, {out_c}, {iter_per_sec}')
                 # print(f"{iter_per_sec:0.2f} iter/s ({t:0.4g}s)")
