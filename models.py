@@ -236,7 +236,7 @@ class DiT(nn.Module):
             return outputs
         return ckpt_forward
 
-    def forward(self, x, t, y):
+    def forward(self, x, t, y, grad_ckpt=False):
         """
         Forward pass of DiT.
         x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
@@ -248,7 +248,10 @@ class DiT(nn.Module):
         y = self.y_embedder(y, self.training)    # (N, D)
         c = t + y                                # (N, D)
         for block in self.blocks:
-            x = torch.utils.checkpoint.checkpoint(self.ckpt_wrapper(block), x, c)       # (N, T, D)
+            if grad_ckpt:
+                x = torch.utils.checkpoint.checkpoint(self.ckpt_wrapper(block), x, c)       # (N, T, D)
+            else:
+                x = block(x, c)
         x = self.final_layer(x, c)                # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)                   # (N, out_channels, H, W)
         return x

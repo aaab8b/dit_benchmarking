@@ -197,7 +197,7 @@ def main(args):
     features_dir = f"{args.feature_path}/imagenet256_features"
     labels_dir = f"{args.feature_path}/imagenet256_labels"
     if args.dummydata:
-        dataset = DummyDataset()
+        dataset = DummyDataset(latent_size)
     else:
         dataset = CustomDataset(features_dir, labels_dir)
     loader = DataLoader(
@@ -229,6 +229,13 @@ def main(args):
         # Only show the progress bar once on each machine.
         disable=not accelerator.is_local_main_process,
     )
+
+    t0 = torch.cuda.Event(enable_timing=True)
+    t1 = torch.cuda.Event(enable_timing=True)
+
+    WARMUP_ITERS = 10
+
+    iter_count = 0
     
     if accelerator.is_main_process:
         logger.info(f"Training for {args.epochs} epochs...")
@@ -270,6 +277,8 @@ def main(args):
                     checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
                     torch.save(checkpoint, checkpoint_path)
                     logger.info(f"Saved checkpoint to {checkpoint_path}")
+            if train_steps == WARMUP_ITERS:
+                t0.record()
 
             if train_steps >= args.max_train_steps:
                 break
@@ -281,6 +290,13 @@ def main(args):
     
     if accelerator.is_main_process:
         logger.info("Done!")
+        
+        t1.record()
+        torch.cuda.synchronize()
+        dt = t0.elapsed_time(t1) / 1000
+
+
+        logger.info(f"{(train_steps-WARMUP_ITERS)*args.global_batch_size/dt:0.2f} samples/s ({dt:0.4g}s)")
 
 
 if __name__ == "__main__":
@@ -307,6 +323,7 @@ if __name__ == "__main__":
     parser.add_argument("--exp-name", type=str, default="init_exp")
     parser.add_argument("--mixed-precision", type=str, default="fp16", choices=["no", "fp16", "bf16"])
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--latent_dim", type=int, default=32)
 
     args = parser.parse_args()
     main(args)
