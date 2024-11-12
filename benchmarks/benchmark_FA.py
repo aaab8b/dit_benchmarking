@@ -1,7 +1,7 @@
 import torch
 import os
 import torch.nn.functional as F
-
+from flash_attn.modules.mha import FlashSelfAttention 
 
 
 # print("Tuning enabled")
@@ -9,9 +9,10 @@ import torch.nn.functional as F
 # os.environ["PYTORCH_TUNABLEOP_VERBOSE"] = "1"  # Enable tuning
 # os.environ["PYTORCH_TUNABLEOP_FILENAME"] = "sdpa_tune_res.csv"  # Specify output file
 
-def time_SDPA_forward(bs, seq_len, num_heads, head_dim, dtype=torch.float32):
+def time_FA_forward(bs, seq_len, num_heads, head_dim, dtype=torch.float32):
 
-    in_data = torch.randn((bs, num_heads, seq_len, head_dim)).cuda().to(dtype)
+    in_data = torch.randn((bs, seq_len, 3, num_heads, head_dim)).cuda().to(dtype)
+    FA = FlashSelfAttention()
 
     n_iter = 1000  # Number of iterations to time
     n_warmup = 10  # Number of warmup iterations
@@ -22,7 +23,7 @@ def time_SDPA_forward(bs, seq_len, num_heads, head_dim, dtype=torch.float32):
     for i in range(n_iter + n_warmup):
         if i == n_warmup:
             t0.record()  # Don't start recording until warmup is finished
-        out = F.scaled_dot_product_attention(in_data, in_data, in_data)
+        out = FA(in_data)
 
     # Compute elapsed time
     t1.record()
@@ -31,9 +32,10 @@ def time_SDPA_forward(bs, seq_len, num_heads, head_dim, dtype=torch.float32):
 
     return n_iter/dt, dt
 
-def time_SDPA_forward_backward(bs, seq_len, num_heads, head_dim, dtype=torch.float32):
+def time_FA_forward_backward(bs, seq_len, num_heads, head_dim, dtype=torch.float32):
 
-    in_data = torch.randn((bs, num_heads, seq_len, head_dim), requires_grad=True).cuda().to(dtype)
+    in_data = torch.randn((bs, seq_len, 3, num_heads, head_dim), requires_grad=True).cuda().to(dtype)
+    FA = FlashSelfAttention()
 
     n_iter = 1000  # Number of iterations to time
     n_warmup = 10  # Number of warmup iterations
@@ -44,7 +46,7 @@ def time_SDPA_forward_backward(bs, seq_len, num_heads, head_dim, dtype=torch.flo
     for i in range(n_iter + n_warmup):
         if i == n_warmup:
             t0.record()  # Don't start recording until warmup is finished
-        out = F.scaled_dot_product_attention(in_data, in_data, in_data).mean()
+        out = FA(in_data).mean()
         out.backward()
         
 
@@ -58,8 +60,9 @@ def time_SDPA_forward_backward(bs, seq_len, num_heads, head_dim, dtype=torch.flo
     # print(f"{n_iter/dt:0.2f} iter/s ({dt:0.4g}s)")
 print(f'seq_len, bs, in_c, out_c, iter_per_sec')
 for seq_len in [256, 1024]:
-    for bs in [16, 32, 64]:
+    # for bs in [16, 32, 64]:
+    for bs in [1, 2, 4, 8]:
         for num_heads, head_dim in [(16, 72)]:
-                iter_per_sec, t = time_SDPA_forward_backward(bs, seq_len, num_heads, head_dim, dtype=torch.bfloat16)
+                iter_per_sec, t = time_FA_forward_backward(bs, seq_len, num_heads, head_dim, dtype=torch.bfloat16)
                 print(f'{seq_len}, {bs}, {num_heads}, {head_dim}, {iter_per_sec}')
                 # print(f"{iter_per_sec:0.2f} iter/s ({t:0.4g}s)")
