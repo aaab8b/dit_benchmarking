@@ -14,11 +14,67 @@ import torch.nn as nn
 import numpy as np
 import math
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
-
+from flash_attn.modules.mha import FlashSelfAttention 
 
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
+#################################################################################
+#                              Flash attention Layer.                           #
+#################################################################################
+
+class FlashSelfMHAModified(nn.Module):
+    """
+    self-attention with flashattention
+    """
+    def __init__(self,
+                 dim,
+                 num_heads,
+                 qkv_bias=True,
+                 qk_norm=False,
+                 attn_drop=0.0,
+                 proj_drop=0.0,
+                 norm_layer=nn.LayerNorm,
+                 device=None,
+                 dtype=None,
+                 ):
+        factory_kwargs = {'device': device, 'dtype': dtype}
+        super().__init__()
+        self.dim = dim
+        self.num_heads = num_heads
+        assert self.dim % num_heads == 0, "self.kdim must be divisible by num_heads"
+        self.head_dim = self.dim // num_heads
+        assert self.head_dim % 8 == 0 and self.head_dim <= 128, "Only support head_dim <= 128 and divisible by 8, got {}".format(self.head_dim)
+
+        self.qkv = nn.Linear(dim, 3 * dim, bias=qkv_bias, **factory_kwargs)
+        # TODO: eps should be 1 / 65530 if using fp16
+        self.q_norm = norm_layer(self.head_dim, elementwise_affine=True, eps=1e-6) if qk_norm else nn.Identity()
+        self.k_norm = norm_layer(self.head_dim, elementwise_affine=True, eps=1e-6) if qk_norm else nn.Identity()
+        self.inner_attn = FlashSelfAttention(attention_dropout=attn_drop)
+        self.proj = nn.Linear(dim, dim, bias=qkv_bias, **factory_kwargs)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+    def forward(self, x,):
+        """
+        Parameters
+        ----------
+        x: torch.Tensor
+            (batch, seqlen, hidden_dim) (where hidden_dim = num heads * head dim)
+        """
+        b, s, d = x.shape
+
+        qkv = self.qkv(x)
+        qkv = qkv.view(b, s, 3, self.num_heads, self.head_dim)  # [b, s, 3, h, d]
+        q, k, v = qkv.unbind(dim=2) # [b, s, h, d]
+        q = self.q_norm(q).to(torch.bfloat16)   # [b, s, h, d]
+        k = self.k_norm(k).to(torch.bfloat16)
+
+        qkv = torch.stack([q, k, v], dim=2)     # [b, s, 3, h, d]
+        context = self.inner_attn(qkv)
+        out = self.proj(context.view(b, s, d))
+        out = self.proj_drop(out)
+
+        return out
 
 #################################################################################
 #               Embedding Layers for Timesteps and Class Labels                 #
@@ -102,10 +158,14 @@ class DiTBlock(nn.Module):
     """
     A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
     """
-    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, **block_kwargs):
+    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, use_fa=True, **block_kwargs):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
+        if use_fa:
+            self.attn = FlashSelfMHAModified(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
+        else:
+            self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
+        # self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
         approx_gelu = lambda: nn.GELU(approximate="tanh")
@@ -158,6 +218,7 @@ class DiT(nn.Module):
         class_dropout_prob=0.1,
         num_classes=1000,
         learn_sigma=True,
+        use_fa=False,
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
@@ -174,7 +235,7 @@ class DiT(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
 
         self.blocks = nn.ModuleList([
-            DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
+            DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, use_fa=use_fa) for _ in range(depth)
         ])
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()

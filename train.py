@@ -30,7 +30,6 @@ from diffusion import create_diffusion
 from accelerate.utils import set_seed
 import wandb
 
-
 #################################################################################
 #                             Training Helper Functions                         #
 #################################################################################
@@ -179,7 +178,8 @@ def main(args):
     latent_size = args.image_size // 8
     model = DiT_models[args.model](
         input_size=latent_size,
-        num_classes=args.num_classes
+        num_classes=args.num_classes,
+        use_fa=args.use_fa
     )
     # Note that parameter initialization is done within the DiT constructor
     model = model.to(device)
@@ -324,6 +324,11 @@ if __name__ == "__main__":
     parser.add_argument("--mixed-precision", type=str, default="fp16", choices=["no", "fp16", "bf16"])
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--latent_dim", type=int, default=32)
+    parser.add_argument(
+        "--use_fa",
+        action='store_true',
+        help="whether to use flash attention",
+    )
 
     args = parser.parse_args()
     main(args)
