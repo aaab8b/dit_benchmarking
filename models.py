@@ -310,7 +310,8 @@ class DiT(nn.Module):
         c = t + y                                # (N, D)
         for block in self.blocks:
             if grad_ckpt:
-                x = torch.utils.checkpoint.checkpoint(self.ckpt_wrapper(block), x, c)       # (N, T, D)
+                assert False, "grad_ckpt not working"
+                # x = torch.utils.checkpoint.checkpoint(self.ckpt_wrapper(block), x, c)       # (N, T, D)
             else:
                 x = block(x, c)
         x = self.final_layer(x, c)                # (N, T, patch_size ** 2 * out_channels)

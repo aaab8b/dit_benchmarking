@@ -11,6 +11,7 @@ import torch
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
+import torch.distributed as dist
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 from collections import OrderedDict
@@ -28,7 +29,8 @@ from models import DiT_models
 from diffusion import create_diffusion
 from accelerate.utils import set_seed
 import wandb
-
+torch._dynamo.config.optimize_ddp=False
+from torch.profiler import profile, record_function, ProfilerActivity,schedule
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -54,6 +56,10 @@ def update_ema(ema_model, model, decay=0.9999):
             print(model_params.keys())
         ema_params[name].mul_(decay).add_(param.data, alpha=1 - decay)
 
+def trace_handler(p):
+    sort_by_keyword = "cuda_time_total"
+    # output = p.key_averages(group_by_input_shape=True).table(sort_by=sort_by_keyword, row_limit=20)
+    # print(output)
 
 def requires_grad(model, flag=True):
     """
@@ -191,8 +197,6 @@ def main(args):
     # Note that parameter initialization is done within the DiT constructor
     model = model.to(device)
     if args.compile:
-        if accelerator.is_main_process:
-            logger.info("using torch compile")
         torch._dynamo.config.optimize_ddp=False
         model= torch.compile(model)
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
@@ -245,7 +249,14 @@ def main(args):
     t0 = torch.cuda.Event(enable_timing=True)
     t1 = torch.cuda.Event(enable_timing=True)
 
-    WARMUP_ITERS = 90
+    WARMUP_ITERS = 10
+    activities = [ProfilerActivity.CPU, ProfilerActivity.CUDA]
+    my_schedule = schedule(
+    skip_first=10,
+    wait=5,
+    warmup=1,
+    active=3,
+    repeat=2)
 
     iter_count = 0
     
@@ -254,47 +265,56 @@ def main(args):
     for epoch in range(args.epochs):
         if accelerator.is_main_process:
             logger.info(f"Beginning epoch {epoch}...")
-        for x, y in loader:
-            x = x.to(device)
-            y = y.to(device)
-            x = x.squeeze(dim=1)
-            y = y.squeeze(dim=1)
-            t = torch.randint(0, diffusion.num_timesteps, (x.shape[0],), device=device)
-            model_kwargs = dict(y=y)
-            loss_dict = diffusion.training_losses(model, x, t, model_kwargs)
-            loss = loss_dict["loss"].mean()
-            opt.zero_grad()
-            accelerator.backward(loss)
-            opt.step()
-            update_ema(ema, model)
+        with profile(activities=activities, record_shapes=True,schedule=my_schedule,on_trace_ready=trace_handler,with_flops=True) as prof:
+            for x, y in loader:
+                x = x.to(device)
+                y = y.to(device)
+                x = x.squeeze(dim=1)
+                y = y.squeeze(dim=1)
+                t = torch.randint(0, diffusion.num_timesteps, (x.shape[0],), device=device)
+                model_kwargs = dict(y=y)
+                loss_dict = diffusion.training_losses(model, x, t, model_kwargs)
+                loss = loss_dict["loss"].mean()
+                prof.step()
+                opt.zero_grad()
+                accelerator.backward(loss)
+                opt.step()
+                update_ema(ema, model)
 
-            train_steps += 1
-            progress_bar.update(1)
-            # print(accelerator.gather(loss))
-            logs = {
-                "loss": accelerator.gather(loss).mean().detach().item(),
-            }
-            accelerator.log(logs, step=train_steps)
-            progress_bar.set_postfix(**logs)
+                train_steps += 1
+                progress_bar.update(1)
+                # print(accelerator.gather(loss))
+                logs = {
+                    "loss": accelerator.gather(loss).mean().detach().item(),
+                }
+                accelerator.log(logs, step=train_steps)
+                progress_bar.set_postfix(**logs)
 
-            # Save DiT checkpoint:
-            if train_steps % args.ckpt_every == 0 and train_steps > 0:
-                if accelerator.is_main_process:
-                    checkpoint = {
-                        "model": model.module.state_dict(),
-                        "ema": ema.state_dict(),
-                        "opt": opt.state_dict(),
-                        "args": args
-                    }
-                    checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
-                    torch.save(checkpoint, checkpoint_path)
-                    logger.info(f"Saved checkpoint to {checkpoint_path}")
-            if train_steps == WARMUP_ITERS:
-                t0.record()
+                # Save DiT checkpoint:
+                if train_steps % args.ckpt_every == 0 and train_steps > 0:
+                    if accelerator.is_main_process:
+                        checkpoint = {
+                            "model": model.module.state_dict(),
+                            "ema": ema.state_dict(),
+                            "opt": opt.state_dict(),
+                            "args": args
+                        }
+                        checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
+                        torch.save(checkpoint, checkpoint_path)
+                        logger.info(f"Saved checkpoint to {checkpoint_path}")
+                if train_steps == WARMUP_ITERS:
+                    t0.record()
 
-            if train_steps >= args.max_train_steps:
-                break
+                if train_steps >= args.max_train_steps:
+                    sort_by_keyword = "cuda_time_total"
+                    output = prof.key_averages(group_by_input_shape=True,).table(sort_by=sort_by_keyword, row_limit=100,max_src_column_width=100,max_shapes_column_width=100,max_name_column_width=100)
+                    if accelerator.is_main_process:
+                        print(output)
+                        prof.export_chrome_trace("trace.json")
+                        torch.save(output,f"profiling_MI300_{args.compile}.txt")
+                    break
         if train_steps >= args.max_train_steps:
+            
             break
 
     model.eval()  # important! This disables randomized embedding dropout
@@ -307,8 +327,7 @@ def main(args):
         torch.cuda.synchronize()
         dt = t0.elapsed_time(t1) / 1000
 
-        with open("benchmarking_result.txt",mode="a") as f:
-            f.write(f"image_size:{args.image_size},world_size:{accelerator.num_processes},batch_size:{args.global_batch_size},{(train_steps-WARMUP_ITERS)*args.global_batch_size/dt:0.2f} samples/s ({dt:0.4g}s)\n")
+
         logger.info(f"{(train_steps-WARMUP_ITERS)*args.global_batch_size/dt:0.2f} samples/s ({dt:0.4g}s)")
 
 
