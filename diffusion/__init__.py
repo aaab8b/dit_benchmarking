@@ -5,7 +5,7 @@
 
 from . import gaussian_diffusion as gd
 from .respace import SpacedDiffusion, space_timesteps
-
+from .flash_attn_processor import FlashAttnProcessor2_0,set_attn_processor
 
 def create_diffusion(
     timestep_respacing,

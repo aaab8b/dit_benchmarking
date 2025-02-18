@@ -25,8 +25,9 @@ from accelerate import Accelerator
 from tqdm import tqdm
 
 from models import DiT_models
-from diffusion import create_diffusion
+from diffusion import create_diffusion,FlashAttnProcessor2_0,set_attn_processor
 from accelerate.utils import set_seed
+from diffusers import DiTTransformer2DModel
 import wandb
 
 
@@ -177,17 +178,35 @@ def main(args):
                 "wandb": {"name": f"{args.exp_name}"}
             },
         )
+    if args.gemm_tuning:
+        if accelerator.is_main_process:
+            logger.info("using gemm tuning")
+        #use TUNABLEOP and gemm tuning csv
+        os.environ["PYTORCH_TUNABLEOP_VERBOSE"]="1"
+        os.environ["PYTORCH_TUNABLEOP_ENABLED"]="1"
+        os.environ["PYTORCH_TUNABLEOP_FILENAME"]="gemm_tuning_results/dit_{}.csv".format(args.image_size)
     if args.seed is not None:
         set_seed(args.seed)
 
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = args.image_size // 8
-    model = DiT_models[args.model](
-        input_size=latent_size,
-        num_classes=args.num_classes,
-        use_fa=args.use_fa
-    )
+    # model = DiT_models[args.model](
+    #     input_size=latent_size,
+    #     num_classes=args.num_classes,
+    #     use_fa=args.use_fa
+    # )
+    #I checked default settings of DiTTransformer2DModel, which is XL/2.
+    model=DiTTransformer2DModel(
+        sample_size=latent_size,
+        num_embeds_ada_norm=args.num_classes,
+        in_channels=4,
+        out_channels=8
+        )
+    if args.use_fa:
+        if accelerator.is_main_process:
+            logger.info("using flash attention")
+        set_attn_processor(model,FlashAttnProcessor2_0())
     # Note that parameter initialization is done within the DiT constructor
     model = model.to(device)
     if args.compile:
@@ -259,8 +278,11 @@ def main(args):
             y = y.to(device)
             x = x.squeeze(dim=1)
             y = y.squeeze(dim=1)
+            # print("x:{}".format(x.shape))
+            # print("y:{}".format(y.shape))
             t = torch.randint(0, diffusion.num_timesteps, (x.shape[0],), device=device)
-            model_kwargs = dict(y=y)
+            # model_kwargs = dict(y=y)
+            model_kwargs= dict(class_labels=y,return_dict=False)
             loss_dict = diffusion.training_losses(model, x, t, model_kwargs)
             loss = loss_dict["loss"].mean()
             opt.zero_grad()
@@ -344,6 +366,11 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--compile",
+        action='store_true',
+        help="whether to use torch.compile",
+    )
+    parser.add_argument(
+        "--gemm-tuning",
         action='store_true',
         help="whether to use torch.compile",
     )

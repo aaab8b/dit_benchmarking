@@ -157,7 +157,12 @@ def main(args):
     Trains a new DiT model.
     """
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
-
+    if args.gemm_tuning:
+        print("using gemm tuning")
+        #use TUNABLEOP and gemm tuning csv
+        os.environ["PYTORCH_TUNABLEOP_VERBOSE"]="1"
+        os.environ["PYTORCH_TUNABLEOP_ENABLED"]="1"
+        os.environ["PYTORCH_TUNABLEOP_FILENAME"]="gemm_tuning_results/profiling_dit_{}.csv".format(args.image_size)
     # Setup accelerator:
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
@@ -310,7 +315,7 @@ def main(args):
                     output = prof.key_averages(group_by_input_shape=True,).table(sort_by=sort_by_keyword, row_limit=100,max_src_column_width=100,max_shapes_column_width=100,max_name_column_width=100)
                     if accelerator.is_main_process:
                         print(output)
-                        prof.export_chrome_trace("trace.json")
+                        prof.export_chrome_trace("trace_use_hipblast_gemm_tuning.json")
                         torch.save(output,f"profiling_MI300_{args.compile}.txt")
                     break
         if train_steps >= args.max_train_steps:
@@ -363,6 +368,11 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--compile",
+        action='store_true',
+        help="whether to use torch.compile",
+    )
+    parser.add_argument(
+        "--gemm-tuning",
         action='store_true',
         help="whether to use torch.compile",
     )

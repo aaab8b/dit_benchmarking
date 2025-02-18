@@ -22,7 +22,7 @@ DATA_FOLDER='/root/workspace/datasets/Imagenet_DiT_feat'
 #                                 --exp-name bs256_8gpu_mi250_fp16 \
 #                                 --use_fa
 
-accelerate launch --multi_gpu --num_processes 8 \
+DISABLE_ADDMM_HIP_LT=0 TORCH_BLAS_PREFER_HIPBLASLT=1 ROCBLAS_USE_HIPBLASLT=1 accelerate launch --multi_gpu --num_processes 8 \
                                 --mixed_precision bf16 train_profiling.py --model DiT-XL/2 \
                                 --feature-path ${DATA_FOLDER} \
                                 --max-train-steps ${MAX_STEP} \
@@ -32,7 +32,8 @@ accelerate launch --multi_gpu --num_processes 8 \
                                 --image-size 256 \
                                 --global-batch-size 256\
                                 --exp-name bs256_8gpu_mi308_bf16_profiling \
-                                --use_fa
+                                --use_fa \
+                                --gemm-tuning
 
 # accelerate launch --multi_gpu --num_processes 8 \
 #                                 --mixed_precision fp16 train.py --model DiT-XL/2 \
