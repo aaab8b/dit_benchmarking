@@ -9,8 +9,8 @@ A minimal training script for DiT.
 """
 import torch
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.allow_tf32 = True
+torch.backends.cuda.matmul.allow_tf32 = False
+torch.backends.cudnn.allow_tf32 = False
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 from collections import OrderedDict
@@ -191,22 +191,25 @@ def main(args):
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     latent_size = args.image_size // 8
-    # model = DiT_models[args.model](
-    #     input_size=latent_size,
-    #     num_classes=args.num_classes,
-    #     use_fa=args.use_fa
-    # )
-    #I checked default settings of DiTTransformer2DModel, which is XL/2.
-    model=DiTTransformer2DModel(
-        sample_size=latent_size,
-        num_embeds_ada_norm=args.num_classes,
-        in_channels=4,
-        out_channels=8
-        )
     if args.use_fa:
         if accelerator.is_main_process:
             logger.info("using flash attention")
-        set_attn_processor(model,FlashAttnProcessor2_0())
+    model = DiT_models[args.model](
+        input_size=latent_size,
+        num_classes=args.num_classes,
+        use_fa=args.use_fa
+    )
+    #I checked default settings of DiTTransformer2DModel, which is XL/2.
+    # model=DiTTransformer2DModel(
+    #     sample_size=latent_size,
+    #     num_embeds_ada_norm=args.num_classes,
+    #     in_channels=4,
+    #     out_channels=8
+    #     )
+    # if args.use_fa:
+    #     if accelerator.is_main_process:
+    #         logger.info("using flash attention")
+    #     set_attn_processor(model,FlashAttnProcessor2_0())
     # Note that parameter initialization is done within the DiT constructor
     model = model.to(device)
     if args.compile:
@@ -281,8 +284,8 @@ def main(args):
             # print("x:{}".format(x.shape))
             # print("y:{}".format(y.shape))
             t = torch.randint(0, diffusion.num_timesteps, (x.shape[0],), device=device)
-            # model_kwargs = dict(y=y)
-            model_kwargs= dict(class_labels=y,return_dict=False)
+            model_kwargs = dict(y=y)
+            # model_kwargs= dict(class_labels=y,return_dict=False)
             loss_dict = diffusion.training_losses(model, x, t, model_kwargs)
             loss = loss_dict["loss"].mean()
             opt.zero_grad()

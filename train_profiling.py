@@ -315,7 +315,7 @@ def main(args):
                     output = prof.key_averages(group_by_input_shape=True,).table(sort_by=sort_by_keyword, row_limit=100,max_src_column_width=100,max_shapes_column_width=100,max_name_column_width=100)
                     if accelerator.is_main_process:
                         print(output)
-                        prof.export_chrome_trace("trace_use_hipblast_gemm_tuning.json")
+                        prof.export_chrome_trace("trace_use_hipblast_gemm_tuning_fa2.json")
                         torch.save(output,f"profiling_MI300_{args.compile}.txt")
                     break
         if train_steps >= args.max_train_steps:

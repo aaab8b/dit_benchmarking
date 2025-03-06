@@ -33,7 +33,8 @@ DISABLE_ADDMM_HIP_LT=0 TORCH_BLAS_PREFER_HIPBLASLT=1 ROCBLAS_USE_HIPBLASLT=1 acc
                                 --global-batch-size 256\
                                 --exp-name bs256_8gpu_mi308_bf16_profiling \
                                 --use_fa \
-                                --gemm-tuning
+                                --gemm-tuning \
+                                --compile
 
 # accelerate launch --multi_gpu --num_processes 8 \
 #                                 --mixed_precision fp16 train.py --model DiT-XL/2 \

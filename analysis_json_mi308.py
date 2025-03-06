@@ -497,7 +497,7 @@ def get_kernel_shape_times(data, kernel_names, search_range, excel_file, skip_ti
 
 
 search_range = ['aten::mm','aten::addmm', 'tex_ts::te_gemm_ts', 'GroupedGemm', 'GroupedGemmBackwards', 'GroupedGemmBackward']
-search_range += ['AttnFuncWithCP', 'AttnFuncWithCPBackward', 'lash_attn::_flash_attn_forward', 'GeneratedBackwardFor_flash_attn__flash_attn_forward_default', 'GeneratedBackwardFor_flash_attn__flash_attn_backward_default']
+search_range += ['AttnFuncWithCP', 'AttnFuncWithCPBackward', 'flash_attn::_flash_attn_forward', 'GeneratedBackwardFor_flash_attn__flash_attn_forward_default', 'GeneratedBackwardFor_flash_attn__flash_attn_backward_default','flash_attn::_flash_attn_backward']
 search_range += ['_LayerNormLinearBackward', '_LayerNormLinear']
 search_range += ['triton_poi_fused__to_copy_add_mul_0', 'triton_poi_fused_cat_0','triton_poi_fused_mul_silu_0','triton_poi_fused_add_0','triton_poi_fused_add_copy_exp_log_maximum_minimum_sub_0']
 search_range += ['aten::add_', 'aten::mul','aten::copy_', 'aten::neg','aten::fill_','aten::add','aten::silu', 'aten::index','aten::mul_', 'aten::scatter_add_', 'aten::gather', 'aten::silu_backward']
@@ -518,11 +518,11 @@ search_range += ["aten::convolution_backward","aten::cudnn_convolution"]
 
 # file_path = "/Users/hanzhihua/Desktop/profiler/torch_profile_group_gemm11111.json"
 # file_path = "/Users/hanzhihua/Desktop/profiler/moe-18b_h20_1217.json"
-file_path="/root/data/trace_use_hipblast.json"
+file_path="/root/zhaobing/dit_benchmarking/trace_use_hipblast_gemm_tuning_fa2.json"
 
 
-out_excel_file = '/root/data/MI308_model_kernel_ratio.xlsx'  #xlsx
-out_op_excel = '/root/data/MI308_cpu_op_ratio.xlsx'  #xlsx
+out_excel_file = '/root/zhaobing/dit_benchmarking/MI308_model_kernel_ratio_fa2.xlsx'  #xlsx
+out_op_excel = '/root/zhaobing/dit_benchmarking/MI308_cpu_op_ratio_fa2.xlsx'  #xlsx
 skip_time_ms = 3.0   #æ€»è€—æ—¶å°äºŽ3mså°†ä¼špass
 
 data = read_json(file_path)

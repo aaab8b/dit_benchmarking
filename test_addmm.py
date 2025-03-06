@@ -2,7 +2,7 @@ import pandas as pd
 import os
 os.environ["PYTORCH_TUNABLEOP_VERBOSE"]="1"
 os.environ["PYTORCH_TUNABLEOP_ENABLED"]="1"
-os.environ["PYTORCH_TUNABLEOP_FILENAME"]="gemm_tuning_results/profiling_dit_{}_pytorch.csv".format(256)
+os.environ["PYTORCH_TUNABLEOP_FILENAME"]="gemm_tuning_results/test_flash_attn_{}_pytorch.csv".format(256)
 # info={'name': 'aten::addmm', 'shape': {'src': ((4608,), (8192, 1152), (1152, 4608), (), (), (8192, 4608)), 'MNK': (8192, 4608, 1152)}, 'dtype': ('c10::BFloat16', 'c10::BFloat16', 'c10::BFloat16', 'Scalar', 'Scalar', 'c10::BFloat16'), 'stride_info': ((1,), (1152, 1), (1, 1152), (), (), (4608, 1))}
 
 kernel_excel_path="./MI308_model_kernel_ratio.xlsx"

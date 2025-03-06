@@ -15,6 +15,7 @@ import numpy as np
 import math
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
 from flash_attn.modules.mha import FlashSelfAttention 
+from flash_attn import flash_attn_func,flash_attn_qkvpacked_func
 
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
@@ -45,12 +46,17 @@ class FlashSelfMHAModified(nn.Module):
         assert self.dim % num_heads == 0, "self.kdim must be divisible by num_heads"
         self.head_dim = self.dim // num_heads
         assert self.head_dim % 8 == 0 and self.head_dim <= 128, "Only support head_dim <= 128 and divisible by 8, got {}".format(self.head_dim)
-
+        # self.to_q = nn.Linear(dim, dim, bias=qkv_bias, **factory_kwargs)
+        # self.to_k = nn.Linear(dim, dim, bias=qkv_bias, **factory_kwargs)
+        # self.to_v = nn.Linear(dim, dim, bias=qkv_bias, **factory_kwargs)
         self.qkv = nn.Linear(dim, 3 * dim, bias=qkv_bias, **factory_kwargs)
         # TODO: eps should be 1 / 65530 if using fp16
         self.q_norm = norm_layer(self.head_dim, elementwise_affine=True, eps=1e-6) if qk_norm else nn.Identity()
         self.k_norm = norm_layer(self.head_dim, elementwise_affine=True, eps=1e-6) if qk_norm else nn.Identity()
-        self.inner_attn = FlashSelfAttention(attention_dropout=attn_drop)
+        self.attn_drop=attn_drop
+        # self.inner_attn = FlashSelfAttention(attention_dropout=attn_drop)
+        self.inner_attn=flash_attn_func
+        # self.inner_attn=flash_attn_qkvpacked_func
         self.proj = nn.Linear(dim, dim, bias=qkv_bias, **factory_kwargs)
         self.proj_drop = nn.Dropout(proj_drop)
 
@@ -66,11 +72,24 @@ class FlashSelfMHAModified(nn.Module):
         qkv = self.qkv(x)
         qkv = qkv.view(b, s, 3, self.num_heads, self.head_dim)  # [b, s, 3, h, d]
         q, k, v = qkv.unbind(dim=2) # [b, s, h, d]
+        q=q.contiguous()
+        k=k.contiguous()
+        v=v.contiguous()
+
+        # q=self.to_q(x)
+        # k=self.to_k(x)
+        # v=self.to_v(x)
+        # q=q.view(b,s,self.num_heads,self.head_dim).contiguous()
+        # k=k.view(b,s,self.num_heads,self.head_dim).contiguous()
+        # v=v.view(b,s,self.num_heads,self.head_dim).contiguous()
+        
+
         q = self.q_norm(q).to(torch.bfloat16)   # [b, s, h, d]
         k = self.k_norm(k).to(torch.bfloat16)
 
-        qkv = torch.stack([q, k, v], dim=2)     # [b, s, 3, h, d]
-        context = self.inner_attn(qkv)
+        # qkv = torch.stack([q, k, v], dim=2).contiguous()     # [b, s, 3, h, d]
+        # context = self.inner_attn(qkv,dropout_p=self.attn_drop,softmax_scale=None,causal=False,deterministic=False)
+        context = self.inner_attn(q,k,v,dropout_p=self.attn_drop,softmax_scale=None,causal=False,deterministic=False)
         out = self.proj(context.view(b, s, d))
         out = self.proj_drop(out)
 
