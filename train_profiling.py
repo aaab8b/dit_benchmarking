@@ -28,7 +28,7 @@ from tqdm import tqdm
 from models import DiT_models
 from diffusion import create_diffusion
 from accelerate.utils import set_seed
-import wandb
+#import wandb
 torch._dynamo.config.optimize_ddp=False
 from torch.profiler import profile, record_function, ProfilerActivity,schedule
 
@@ -166,7 +166,6 @@ def main(args):
     # Setup accelerator:
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
-        log_with='wandb',
     )
     device = accelerator.device
 
@@ -181,13 +180,12 @@ def main(args):
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
 
-        accelerator.init_trackers(
-            project_name="DiT", 
-            config=args,
-            init_kwargs={
-                "wandb": {"name": f"{args.exp_name}"}
-            },
-        )
+        #accelerator.init_trackers(
+        #    project_name="DiT", 
+        #    config=args,
+        #    init_kwargs={
+        #    },
+        #)
     if args.seed is not None:
         set_seed(args.seed)
 
@@ -267,10 +265,10 @@ def main(args):
     
     if accelerator.is_main_process:
         logger.info(f"Training for {args.epochs} epochs...")
-    for epoch in range(args.epochs):
-        if accelerator.is_main_process:
-            logger.info(f"Beginning epoch {epoch}...")
-        with profile(activities=activities, record_shapes=True,schedule=my_schedule,on_trace_ready=trace_handler,with_flops=True) as prof:
+    with profile(activities=activities, record_shapes=True,schedule=my_schedule,on_trace_ready=trace_handler,with_flops=True) as prof:
+        for epoch in range(args.epochs):
+            if accelerator.is_main_process:
+                logger.info(f"Beginning epoch {epoch}...")
             for x, y in loader:
                 x = x.to(device)
                 y = y.to(device)
@@ -310,31 +308,32 @@ def main(args):
                 if train_steps == WARMUP_ITERS:
                     t0.record()
 
-                if train_steps >= args.max_train_steps:
-                    sort_by_keyword = "cuda_time_total"
-                    output = prof.key_averages(group_by_input_shape=True,).table(sort_by=sort_by_keyword, row_limit=100,max_src_column_width=100,max_shapes_column_width=100,max_name_column_width=100)
-                    if accelerator.is_main_process:
-                        print(output)
-                        prof.export_chrome_trace("trace_use_hipblast_gemm_tuning_fa2.json")
-                        torch.save(output,f"profiling_MI300_{args.compile}.txt")
-                    break
-        if train_steps >= args.max_train_steps:
             
-            break
+                if train_steps >= args.max_train_steps:
+                    
+                    break
+            if train_steps >= args.max_train_steps:
+                    break
 
-    model.eval()  # important! This disables randomized embedding dropout
-    # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
-    
-    if accelerator.is_main_process:
-        logger.info("Done!")
+        model.eval()  # important! This disables randomized embedding dropout
+        # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
         
-        t1.record()
-        torch.cuda.synchronize()
-        dt = t0.elapsed_time(t1) / 1000
-
-
-        logger.info(f"{(train_steps-WARMUP_ITERS)*args.global_batch_size/dt:0.2f} samples/s ({dt:0.4g}s)")
-
+        if accelerator.is_main_process:
+            logger.info("Done!")
+            
+            t1.record()
+            torch.cuda.synchronize()
+            dt = t0.elapsed_time(t1) / 1000
+            logger.info(f"{(train_steps-WARMUP_ITERS)*args.global_batch_size/dt:0.2f} samples/s ({dt:0.4g}s)")
+            
+            
+            sort_by_keyword = "cuda_time_total"
+            output = prof.key_averages(group_by_input_shape=True,).table(sort_by=sort_by_keyword, row_limit=100,max_src_column_width=100,max_shapes_column_width=100,max_name_column_width=100)
+            print(output)
+            model_name=args.model[:-2]
+            prof.export_chrome_trace("trace_nv_fa3_{}.json".format(model_name))
+            torch.save(output,f"profiling_nv_fa3_{model_name}.txt")
+            
 
 if __name__ == "__main__":
     # Default args here will train DiT-XL/2 with the hyperparameters we used in our paper (except training iters).
@@ -379,3 +378,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     main(args)
+

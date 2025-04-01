@@ -518,11 +518,11 @@ search_range += ["aten::convolution_backward","aten::cudnn_convolution"]
 
 # file_path = "/Users/hanzhihua/Desktop/profiler/torch_profile_group_gemm11111.json"
 # file_path = "/Users/hanzhihua/Desktop/profiler/moe-18b_h20_1217.json"
-file_path="/root/zhaobing/dit_benchmarking/trace_use_hipblast_gemm_tuning_fa2.json"
+file_path="/root/datasets/dit_benchmarking/trace_nv_fa3.json"
 
 
-out_excel_file = '/root/zhaobing/dit_benchmarking/MI308_model_kernel_ratio_fa2.xlsx'  #xlsx
-out_op_excel = '/root/zhaobing/dit_benchmarking/MI308_cpu_op_ratio_fa2.xlsx'  #xlsx
+out_excel_file = '/root/datasets/dit_benchmarking/trace_nv_fa3.xlsx'  #xlsx
+out_op_excel = '/root/datasets/dit_benchmarking/nv_cpu_op_ratio_fa3.xlsx'  #xlsx
 skip_time_ms = 3.0   #æ€»è€—æ—¶å°äºŽ3mså°†ä¼špass
 
 data = read_json(file_path)
@@ -532,9 +532,10 @@ get_all_cpu_op_times(data, ('GroupedGemm',), out_op_excel, skip_time_ms)
 
 # names = get_all_name(data, "Fmha")
 # names = get_all_name(data, "kernel_func")
-
-names = get_all_name(data, "Cijk")
-#names = get_all_name(data, "gemm")
+#for amd
+# names = get_all_name(data, "Cijk")
+#for nv
+names = get_all_name(data, "gemm")
 # names = get_all_name(data, "rmsnorm")
 # names = get_all_name(data, "triton_")
 # names = get_all_name(data, "elementwise")
