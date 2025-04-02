@@ -327,12 +327,13 @@ def main(args):
             logger.info(f"{(train_steps-WARMUP_ITERS)*args.global_batch_size/dt:0.2f} samples/s ({dt:0.4g}s)")
             
             
-            sort_by_keyword = "cuda_time_total"
-            output = prof.key_averages(group_by_input_shape=True,).table(sort_by=sort_by_keyword, row_limit=100,max_src_column_width=100,max_shapes_column_width=100,max_name_column_width=100)
+        sort_by_keyword = "cuda_time_total"
+        output = prof.key_averages(group_by_input_shape=True,).table(sort_by=sort_by_keyword, row_limit=100,max_src_column_width=100,max_shapes_column_width=100,max_name_column_width=100)
+        if accelerator.is_main_process:
             print(output)
-            model_name=args.model[:-2]
-            prof.export_chrome_trace("trace_nv_fa3_{}.json".format(model_name))
-            torch.save(output,f"profiling_nv_fa3_{model_name}.txt")
+        model_name=args.model[:-2]
+        prof.export_chrome_trace("trace_nv_fa3_{}_rank_{}.json".format(model_name,accelerator.local_process_index))
+        torch.save(output,f"profiling_nv_fa3_{model_name}.txt")
             
 
 if __name__ == "__main__":
@@ -378,4 +379,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     main(args)
+
 
